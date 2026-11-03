@@ -80,14 +80,31 @@ jobs:
           echo "BBOX=$BBOX" >> "$GITHUB_ENV"
           ls -lh data
 
+      - name: Sources de la carte (mer, Natural Earth, lacs)
+        run: |
+          mkdir -p data/sources
+          get() {
+            for opt in -4 -6 ""; do
+              if curl -fSL $opt --retry 4 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o "$2" "$1"; then return 0; fi
+              echo "Échec avec l'option '$opt' pour $1"
+            done
+            return 1
+          }
+          get https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip data/sources/water-polygons-split-3857.zip
+          get https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip data/sources/natural_earth_vector.sqlite.zip
+          get https://github.com/acalcutt/osm-lakelines/releases/download/latest/lake_centerline.shp.zip data/sources/lake_centerline.shp.zip
+          ls -lh data/sources
+
       - name: Carte (Planetiler → PMTiles)
         run: |
           curl -fsSL -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
-          java -Xmx10g -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true -jar planetiler.jar \
+          java -Xmx10g -jar planetiler.jar \
             --osm-path=data/region.osm.pbf \
             --output=out/${{ inputs.region }}.pmtiles \
             --bounds="$BBOX" \
-            --download --download-dir=data/sources \
+            --water-polygons-path=data/sources/water-polygons-split-3857.zip \
+            --natural-earth-path=data/sources/natural_earth_vector.sqlite.zip \
+            --lake-centerlines-path=data/sources/lake_centerline.shp.zip \
             --force
           rm -rf data/sources
           ls -lh out
