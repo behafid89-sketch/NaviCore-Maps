@@ -1,0 +1,158 @@
+name: Fabriquer une région
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Identifiant de la région (voir regions.json)"
+        required: true
+        default: fr-occitanie
+      stylepack:
+        description: "Refaire aussi le pack de style hors connexion"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: catalog
+  cancel-in-progress: false
+
+env:
+  VALHALLA_IMAGE: ghcr.io/valhalla/valhalla:3.6.3
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v5
+
+      - name: Libérer de l'espace disque
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Outils
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q osmium-tool jq
+          pip install --break-system-packages osmium
+
+      - name: Java 21 (Planetiler)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Lire la définition de la région
+        id: def
+        run: |
+          R=$(jq -c --arg id "${{ inputs.region }}" '.regions[] | select(.id == $id)' regions.json)
+          if [ -z "$R" ]; then echo "Région inconnue : ${{ inputs.region }}"; exit 1; fi
+          echo "json=$R" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ inputs.region }}-$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+          mkdir -p data out
+
+      - name: Télécharger OpenStreetMap (Geofabrik)
+        run: |
+          i=0
+          for p in $(echo '${{ steps.def.outputs.json }}' | jq -r '.geofabrik[]'); do
+            i=$((i+1))
+            curl -fsSL --retry 3 -o "data/part$i.osm.pbf" "https://download.geofabrik.de/$p-latest.osm.pbf"
+            osmium fileinfo -g header.boxes "data/part$i.osm.pbf"
+          done
+          if [ "$i" -gt 1 ]; then
+            osmium merge data/part*.osm.pbf -o data/region.osm.pbf --overwrite
+          else
+            mv data/part1.osm.pbf data/region.osm.pbf
+          fi
+          rm -f data/part*.osm.pbf
+          # Rectangle englobant (union des cadres Geofabrik)
+          BBOX=$(osmium fileinfo -e -g data.bbox data/region.osm.pbf | tr -d '()' | tr ' ' ',')
+          echo "Cadre : $BBOX"
+          echo "BBOX=$BBOX" >> "$GITHUB_ENV"
+          ls -lh data
+
+      - name: Carte (Planetiler → PMTiles)
+        run: |
+          curl -fsSL -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+          java -Xmx10g -jar planetiler.jar \
+            --osm-path=data/region.osm.pbf \
+            --output=out/${{ inputs.region }}.pmtiles \
+            --bounds="$BBOX" \
+            --download --download-dir=data/sources \
+            --force
+          rm -rf data/sources
+          ls -lh out
+
+      - name: Routage (Valhalla → tar)
+        run: |
+          docker pull "$VALHALLA_IMAGE"
+          docker run --rm -v "$PWD/data:/data" "$VALHALLA_IMAGE" bash -c '
+            set -e
+            valhalla_build_config --mjolnir-tile-dir /data/valhalla_tiles \
+              --mjolnir-tile-extract /data/valhalla_tiles.tar \
+              --mjolnir-admin /data/admins.sqlite > /data/valhalla.json
+            valhalla_build_admins -c /data/valhalla.json /data/region.osm.pbf
+            valhalla_build_tiles -c /data/valhalla.json /data/region.osm.pbf
+            valhalla_build_extract -c /data/valhalla.json -v
+            valhalla_service --version || true
+          '
+          sudo chown -R "$USER" data
+          mv data/valhalla_tiles.tar "out/${{ inputs.region }}-routing.tar"
+          sudo rm -rf data/valhalla_tiles
+          ls -lh out
+
+      - name: Recherche (BAN + OpenStreetMap → SQLite)
+        run: |
+          mkdir -p data/ban
+          BAN=""
+          for d in $(echo '${{ steps.def.outputs.json }}' | jq -r '.banDepartments[]?'); do
+            curl -fsSL --retry 3 -o "data/ban/adresses-$d.csv.gz" "https://adresse.data.gouv.fr/data/ban/adresses/latest/csv/adresses-$d.csv.gz"
+            BAN="$BAN data/ban/adresses-$d.csv.gz"
+          done
+          python3 scripts/build_search.py --pbf data/region.osm.pbf --region "${{ inputs.region }}" --out "data/search.db" --ban $BAN
+          echo "SEARCH_SIZE=$(stat -c %s data/search.db)" >> "$GITHUB_ENV"
+          gzip -9 -c data/search.db > "out/${{ inputs.region }}-search.db.gz"
+          ls -lh out
+
+      - name: Pack de style hors connexion
+        if: ${{ inputs.stylepack }}
+        run: python3 scripts/build_stylepack.py out/stylepack.zip
+
+      - name: Publier les fichiers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.def.outputs.tag }}"
+          NAME=$(echo '${{ steps.def.outputs.json }}' | jq -r '.name')
+          gh release create "$TAG" out/* --title "$NAME — $(date -u +%Y-%m-%d)" \
+            --notes "Données © contributeurs OpenStreetMap (ODbL), Base Adresse Nationale (Licence Ouverte Etalab 2.0). Style Liberty © OpenFreeMap (BSD)."
+
+      - name: Mettre à jour le catalogue
+        run: |
+          TAG="${{ steps.def.outputs.tag }}"
+          J='${{ steps.def.outputs.json }}'
+          python3 scripts/update_catalog.py --tag "$TAG" region \
+            --id "${{ inputs.region }}" \
+            --name "$(echo "$J" | jq -r .name)" \
+            --country "$(echo "$J" | jq -r .country)" \
+            --country-code "$(echo "$J" | jq -r .countryCode)" \
+            --bbox "$BBOX" \
+            --map "out/${{ inputs.region }}.pmtiles" \
+            --routing "out/${{ inputs.region }}-routing.tar" \
+            --search "out/${{ inputs.region }}-search.db.gz" \
+            --search-uncompressed-size "$SEARCH_SIZE" \
+            --valhalla-version "$VALHALLA_IMAGE"
+          if [ -f out/stylepack.zip ]; then
+            python3 scripts/update_catalog.py --tag "$TAG" stylepack --file out/stylepack.zip
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add catalog.json
+          git commit -m "Catalogue : ${{ inputs.region }} ($TAG)"
+          git pull --rebase origin main
+          git push origin HEAD:main

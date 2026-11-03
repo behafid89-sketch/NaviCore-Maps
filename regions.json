@@ -1,0 +1,12 @@
+{
+  "regions": [
+    {
+      "id": "fr-occitanie",
+      "name": "Occitanie",
+      "country": "France",
+      "countryCode": "FR",
+      "geofabrik": ["europe/france/languedoc-roussillon", "europe/france/midi-pyrenees"],
+      "banDepartments": ["09", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82"]
+    }
+  ]
+}
