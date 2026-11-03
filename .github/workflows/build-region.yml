@@ -62,7 +62,7 @@ jobs:
           for p in $(echo '${{ steps.def.outputs.json }}' | jq -r '.geofabrik[]'); do
             i=$((i+1))
             curl -fsSL --retry 3 -o "data/part$i.osm.pbf" "https://download.geofabrik.de/$p-latest.osm.pbf"
-            osmium fileinfo -g header.boxes "data/part$i.osm.pbf"
+            osmium fileinfo -g header.boxes "data/part$i.osm.pbf" | tr -d '()' | tr ' ' '\n' | grep , >> data/boxes.txt
           done
           if [ "$i" -gt 1 ]; then
             osmium merge data/part*.osm.pbf -o data/region.osm.pbf --overwrite
@@ -70,8 +70,12 @@ jobs:
             mv data/part1.osm.pbf data/region.osm.pbf
           fi
           rm -f data/part*.osm.pbf
-          # Rectangle englobant (union des cadres Geofabrik)
-          BBOX=$(osmium fileinfo -e -g data.bbox data/region.osm.pbf | tr -d '()' | tr ' ' ',')
+          # Rectangle englobant : union des cadres officiels Geofabrik (en-têtes des fichiers)
+          BBOX=$(python3 -c "
+          import sys
+          b=[list(map(float,l.split(','))) for l in open('data/boxes.txt') if l.strip()]
+          print('%.6f,%.6f,%.6f,%.6f'%(min(x[0] for x in b),min(x[1] for x in b),max(x[2] for x in b),max(x[3] for x in b)))
+          ")
           echo "Cadre : $BBOX"
           echo "BBOX=$BBOX" >> "$GITHUB_ENV"
           ls -lh data
@@ -79,7 +83,7 @@ jobs:
       - name: Carte (Planetiler → PMTiles)
         run: |
           curl -fsSL -o planetiler.jar https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
-          java -Xmx10g -jar planetiler.jar \
+          java -Xmx10g -Djava.net.preferIPv4Stack=true -Djava.net.preferIPv4Addresses=true -jar planetiler.jar \
             --osm-path=data/region.osm.pbf \
             --output=out/${{ inputs.region }}.pmtiles \
             --bounds="$BBOX" \

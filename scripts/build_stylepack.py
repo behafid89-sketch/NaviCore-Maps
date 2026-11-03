@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -40,9 +41,9 @@ def main(out_zip):
         tf = layer.get("layout", {}).get("text-font")
         if tf is not None:
             collect_fonts(tf, fontstacks)
-    # MapLibre demande chaque police séparément quand une pile en contient plusieurs.
-    fonts = sorted({f.strip() for stack in fontstacks for f in stack.split(",")})
-    print("Polices :", fonts)
+    # MapLibre demande les glyphes par « pile » de polices (noms séparés par des virgules).
+    stacks = sorted(fontstacks)
+    print("Piles de polices :", stacks)
 
     with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("style.json", json.dumps(style, ensure_ascii=False))
@@ -60,23 +61,30 @@ def main(out_zip):
                     print(f"Sprite absent {base}{suffix} ({e.code})")
 
         count = 0
-        for font in fonts:
+        for stack in stacks:
+            # Plusieurs écritures du nom de dossier, selon la façon dont MapLibre encode l'adresse.
+            dirs = sorted({stack, urllib.parse.quote(stack, safe=""), stack.replace(" ", "%20")})
+            first_font = stack.split(",")[0]
             for start in range(0, 65536, 256):
                 rng = f"{start}-{start + 255}"
-                url = glyphs.replace("{fontstack}", urllib.request.quote(font)).replace("{range}", rng)
-                try:
-                    data = fetch(url)
-                except urllib.error.HTTPError:
-                    continue
+                data = None
+                for candidate in (stack, first_font):
+                    url = glyphs.replace("{fontstack}", urllib.parse.quote(candidate)).replace("{range}", rng)
+                    try:
+                        data = fetch(url)
+                        break
+                    except urllib.error.HTTPError:
+                        continue
                 if not data:
                     continue
-                z.writestr(f"fonts/{font}/{rng}.pbf", data)
+                for d in dirs:
+                    z.writestr(f"fonts/{d}/{rng}.pbf", data)
                 count += 1
-        print(f"{count} fichiers de glyphes")
+        print(f"{count} plages de glyphes")
 
         z.writestr(
             "stylepack.json",
-            json.dumps({"schema": 1, "source": STYLE_URL, "sprites": [s for s, _ in sprite_urls], "fonts": fonts}),
+            json.dumps({"schema": 1, "source": STYLE_URL, "sprites": [s for s, _ in sprite_urls], "fontstacks": stacks}),
         )
     print(f"Pack écrit : {out_zip} ({os.path.getsize(out_zip) / 1e6:.1f} Mo)")
 
