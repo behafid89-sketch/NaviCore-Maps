@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "regions": [
+    {
+      "id": "fr-occitanie",
+      "name": "Occitanie",
+      "country": "France",
+      "countryCode": "FR",
+      "bbox": [
+        -0.327537,
+        42.16658,
+        4.847979,
+        45.04779
+      ],
+      "version": "fr-occitanie-20261104-0641",
+      "date": "2026-11-04",
+      "valhalla": "ghcr.io/valhalla/valhalla:3.6.3",
+      "files": [
+        {
+          "kind": "map",
+          "url": "https://github.com/behafid89-sketch/NaviCore-Maps/releases/download/fr-occitanie-20261104-0641/fr-occitanie.pmtiles",
+          "size": 453670030,
+          "sha256": "1878f0705b2c1583e937f03c4a06b31db87592c9b0d391a2f14a69f038e98970"
+        },
+        {
+          "kind": "routing",
+          "url": "https://github.com/behafid89-sketch/NaviCore-Maps/releases/download/fr-occitanie-20261104-0641/fr-occitanie-routing.tar",
+          "size": 546856960,
+          "sha256": "59d99e95810a711487c7a8670385fde4ac4f2b788919cfd9ab24b178200d6798"
+        },
+        {
+          "kind": "search",
+          "url": "https://github.com/behafid89-sketch/NaviCore-Maps/releases/download/fr-occitanie-20261104-0641/fr-occitanie-search.db.gz",
+          "size": 84280613,
+          "sha256": "9fb254f56cc55cf4a97465c676d64abc1f9c7103954e15f72508f5b8342cc630",
+          "gzip": true,
+          "uncompressedSize": 185446400
+        }
+      ]
+    }
+  ],
+  "updated": "2026-11-04T07:02:07Z",
+  "stylepack": {
+    "kind": "stylepack",
+    "url": "https://github.com/behafid89-sketch/NaviCore-Maps/releases/download/fr-occitanie-20261104-0641/stylepack.zip",
+    "size": 123872874,
+    "sha256": "710cefce3b2761e94ce68d33756df5e2fc11313908a71324f0aa8b0aec7bcf61",
+    "version": "fr-occitanie-20261104-0641"
+  }
+}
