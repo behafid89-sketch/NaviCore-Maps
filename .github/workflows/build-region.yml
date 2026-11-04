@@ -81,18 +81,31 @@ jobs:
           ls -lh data
 
       - name: Sources de la carte (mer, Natural Earth, lacs)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data/sources
           get() {
             for opt in -4 -6 ""; do
-              if curl -fSL $opt --retry 4 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o "$2" "$1"; then return 0; fi
+              if curl -fSL $opt --retry 3 --retry-all-errors --retry-delay 20 --connect-timeout 30 -o "$2" "$1"; then return 0; fi
               echo "Échec avec l'option '$opt' pour $1"
             done
             return 1
           }
-          get https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip data/sources/water-polygons-split-3857.zip
-          get https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip data/sources/natural_earth_vector.sqlite.zip
-          get https://github.com/acalcutt/osm-lakelines/releases/download/latest/lake_centerline.shp.zip data/sources/lake_centerline.shp.zip
+          # Copie de secours dans la publication « sources » de ce dépôt : on ne dépend plus des serveurs d'origine.
+          fetch_source() {
+            local name="$1" url="$2"
+            if gh release download sources -p "$name" -D data/sources --clobber 2>/dev/null; then
+              echo "$name : copie de secours utilisée"; return 0
+            fi
+            get "$url" "data/sources/$name" || return 1
+            gh release view sources >/dev/null 2>&1 || gh release create sources --title "Sources de carte (copie de secours)" \
+              --notes "Contours de mer (osmdata.openstreetmap.de, ODbL), Natural Earth (domaine public), lignes de lacs (osm-lakelines, ODbL)."
+            gh release upload sources "data/sources/$name" --clobber || true
+          }
+          fetch_source water-polygons-split-3857.zip https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip
+          fetch_source natural_earth_vector.sqlite.zip https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip
+          fetch_source lake_centerline.shp.zip https://github.com/acalcutt/osm-lakelines/releases/download/latest/lake_centerline.shp.zip
           ls -lh data/sources
 
       - name: Carte (Planetiler → PMTiles)
